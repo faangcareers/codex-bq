@@ -61,9 +61,9 @@ const MIME_TYPES = {
   ".ico": "image/x-icon"
 };
 
-const SYSTEM_PROMPT = `You are an interview coach for product and UX/UI designers.\nYou receive the raw text of a design job posting.\nExtract the role level (junior/mid/senior/lead/staff/director/unknown) and likely design focus, then generate 6-10 behavioral interview questions tailored to the role.\nQuestions must be behavioral (about past actions, decisions, tradeoffs, collaboration, ambiguity, impact).\nAvoid generic or fluffy questions.\nWrite questions in English and in a specific, senior-friendly style ("Tell me about a time...", "Describe a project...", "Give an example...").\nIf the posting suggests platform, B2B/SaaS, design systems, or enterprise scope, make questions reflect that.\nGroup questions by theme.\nOutput JSON only.`;
+const SYSTEM_PROMPT = `You are an interview coach for product and UX/UI designers.\nYou receive the raw text of a design job posting.\nExtract the role level (junior/mid/senior/lead/staff/director/unknown), role type (ic/manager/mixed/unknown), likely domain (b2b/consumer/enterprise/saas/unknown), and likely design focus.\nDetect and return key signals (tags) from the posting.\nThen generate 6-10 behavioral interview questions tailored to the role.\nQuestions must be behavioral (about past actions, decisions, tradeoffs, collaboration, ambiguity, impact).\nAvoid generic or fluffy questions.\nWrite questions in English and in a specific, senior-friendly style ("Tell me about a time...", "Describe a project...", "Give an example...").\nQuestions must be evidence-anchored: each theme should explicitly reflect the detected signals.\nIf the posting suggests platform, B2B/SaaS, design systems, or enterprise scope, make questions reflect that.\nGroup questions by theme.\nOutput JSON only.`;
 
-const SCHEMA_HINT = `Return a JSON object with keys:\n- role_level: one of ["junior","mid","senior","lead","staff","director","unknown"]\n- focus: short string like "product design", "ux/ui", "design systems", "research-heavy", "growth", "enterprise", "consumer", etc.\n- themes: array of objects with keys:\n  - theme: short label like "Strategy & Problem Framing", "End-to-End Execution", "Design Systems & Visual Language", "Collaboration & Influence", "Ambiguity & Tradeoffs", "Impact & Metrics"\n  - questions: array of 1-3 strings\nTotal questions across all themes must be 6-10.`;
+const SCHEMA_HINT = `Return a JSON object with keys:\n- role_level: one of ["junior","mid","senior","lead","staff","director","unknown"]\n- role_type: one of ["ic","manager","mixed","unknown"]\n- domain: one of ["b2b","consumer","enterprise","saas","unknown"]\n- focus: short string like "product design", "ux/ui", "design systems", "research-heavy", "growth", "enterprise", "consumer", etc.\n- signals: array of 3-10 strings (keywords/tags extracted from the posting)\n- themes: array of objects with keys:\n  - theme: short label like "Strategy & Problem Framing", "End-to-End Execution", "Design Systems & Visual Language", "Collaboration & Influence", "Ambiguity & Tradeoffs", "Impact & Metrics"\n  - questions: array of 1-3 strings\nTotal questions across all themes must be 6-10.`;
 
 function sendJson(res, status, payload) {
   const body = JSON.stringify(payload);
@@ -119,12 +119,22 @@ async function fetchJobText(url) {
     }
   });
 
-  if (!response.ok) {
-    throw new Error(`Failed to fetch page. Status ${response.status}`);
-  }
+  let text = "";
 
-  const html = await response.text();
-  const text = extractTextFromHtml(html);
+  if (response.ok) {
+    const html = await response.text();
+    text = extractTextFromHtml(html);
+  } else {
+    const jinaUrl = url.startsWith("https://")
+      ? `https://r.jina.ai/https://${url.slice("https://".length)}`
+      : `https://r.jina.ai/http://${url.slice("http://".length)}`;
+    const jinaResponse = await fetch(jinaUrl);
+    if (!jinaResponse.ok) {
+      throw new Error(`Failed to fetch page. Status ${response.status}`);
+    }
+    const jinaText = await jinaResponse.text();
+    text = normalizeJobText(jinaText);
+  }
 
   if (!text || text.length < 200) {
     throw new Error("Not enough readable text found on the page.");
@@ -151,12 +161,80 @@ function inferSeniorityFromText(jobText) {
   return "unknown";
 }
 
+function extractSignals(jobText) {
+  const text = (jobText || "").toLowerCase();
+  const has = (pattern) => pattern.test(text);
+  const tags = [];
+
+  const addTag = (tag) => {
+    if (!tags.includes(tag)) tags.push(tag);
+  };
+
+  if (has(/\b(b2b|business[- ]to[- ]business)\b/)) addTag("b2b");
+  if (has(/\b(enterprise|large[- ]scale|regulated|compliance)\b/)) addTag("enterprise");
+  if (has(/\b(consumer|b2c|consumer[- ]facing)\b/)) addTag("consumer");
+  if (has(/\b(saas|subscription)\b/)) addTag("saas");
+
+  if (has(/\b(mobile|ios|android)\b/)) addTag("mobile");
+  if (has(/\b(web|responsive|dashboard)\b/)) addTag("web");
+  if (has(/\b(multi[- ]platform|cross[- ]platform)\b/)) addTag("multi-platform");
+
+  if (has(/\b(design system|design systems|component library)\b/)) addTag("design systems");
+  if (has(/\b(user research|ux research|research)\b/)) addTag("research");
+  if (has(/\b(metrics|kpi|conversion|experimentation|ab test|a\/b)\b/)) addTag("metrics & experimentation");
+  if (has(/\b(accessibility|a11y|wcag)\b/)) addTag("accessibility");
+
+  if (has(/\b(stakeholder|stakeholders)\b/)) addTag("stakeholder management");
+  if (has(/\b(cross[- ]functional|product manager|engineering|marketing|data)\b/)) addTag("cross-functional");
+  if (has(/\b(leadership|influence|strategy)\b/)) addTag("leadership");
+
+  let domain = "unknown";
+  if (tags.includes("b2b")) domain = "b2b";
+  else if (tags.includes("enterprise")) domain = "enterprise";
+  else if (tags.includes("saas")) domain = "saas";
+  else if (tags.includes("consumer")) domain = "consumer";
+
+  const managerSignals = has(/\b(manager|management|people manager|hiring|mentorship|mentoring|performance reviews)\b/);
+  const icSignals = has(/\b(individual contributor|ic)\b/);
+  let roleType = "unknown";
+  if (managerSignals && icSignals) roleType = "mixed";
+  else if (managerSignals) roleType = "manager";
+  else if (icSignals) roleType = "ic";
+
+  return { signals: tags.slice(0, 10), domain, role_type: roleType };
+}
+
+function inferFocusFromText(jobText) {
+  const text = (jobText || "").toLowerCase();
+  const has = (pattern) => pattern.test(text);
+
+  if (has(/\b(brand|visual identity|graphic|marketing design|campaign)\b/)) {
+    return "brand & visual design";
+  }
+  if (has(/\b(design system|design systems|component library)\b/)) {
+    return "design systems";
+  }
+  if (has(/\b(user research|ux research|research)\b/)) {
+    return "research-heavy";
+  }
+  if (has(/\b(growth|conversion|activation|retention|funnel)\b/)) {
+    return "growth";
+  }
+  if (has(/\b(product designer|product design|ux\/ui|ux|ui)\b/)) {
+    return "product design";
+  }
+
+  return "product design";
+}
+
 async function callOpenAI(jobText) {
   if (!OPENAI_API_KEY) {
     throw new Error("Missing OPENAI_API_KEY in environment.");
   }
 
   const heuristicLevel = inferSeniorityFromText(jobText);
+  const extracted = extractSignals(jobText);
+  const heuristicFocus = inferFocusFromText(jobText);
   const userPrompt = `Job posting text (English):\n${jobText}\n\n${SCHEMA_HINT}`;
   const responseSchema = {
     name: "design_role_questions",
@@ -168,7 +246,21 @@ async function callOpenAI(jobText) {
           type: "string",
           enum: ["junior", "mid", "senior", "lead", "staff", "director", "unknown"]
         },
+        role_type: {
+          type: "string",
+          enum: ["ic", "manager", "mixed", "unknown"]
+        },
+        domain: {
+          type: "string",
+          enum: ["b2b", "consumer", "enterprise", "saas", "unknown"]
+        },
         focus: { type: "string" },
+        signals: {
+          type: "array",
+          minItems: 0,
+          maxItems: 10,
+          items: { type: "string" }
+        },
         themes: {
           type: "array",
           minItems: 3,
@@ -189,7 +281,7 @@ async function callOpenAI(jobText) {
           }
         }
       },
-      required: ["role_level", "focus", "themes"]
+      required: ["role_level", "role_type", "domain", "focus", "signals", "themes"]
     },
     strict: true
   };
@@ -202,7 +294,7 @@ async function callOpenAI(jobText) {
     },
     body: JSON.stringify({
       model: "gpt-4.1-mini",
-      instructions: `${SYSTEM_PROMPT}\nHeuristic seniority hint from text (may be unknown): ${heuristicLevel}. If the posting explicitly names a level, prioritize that.`,
+      instructions: `${SYSTEM_PROMPT}\nHeuristic seniority hint from text (may be unknown): ${heuristicLevel}. If the posting explicitly names a level, prioritize that.\nHeuristic focus hint: ${heuristicFocus}.\nDetected signals: ${extracted.signals.join(", ") || "none"}.\nDetected domain: ${extracted.domain}. Detected role type: ${extracted.role_type}. Use these signals explicitly in the themes and questions.`,
       input: userPrompt,
       text: {
         format: {
@@ -240,11 +332,31 @@ async function callOpenAI(jobText) {
     throw new Error("OpenAI JSON missing themes array.");
   }
 
-  if (parsed.role_level === "unknown" && heuristicLevel !== "unknown") {
-    return { ...parsed, role_level: heuristicLevel };
+  let final = parsed;
+
+  if (final.role_level === "unknown" && heuristicLevel !== "unknown") {
+    final = { ...final, role_level: heuristicLevel };
   }
 
-  return parsed;
+  if (final.role_type === "unknown" && extracted.role_type !== "unknown") {
+    final = { ...final, role_type: extracted.role_type };
+  }
+
+  if (final.domain === "unknown" && extracted.domain !== "unknown") {
+    final = { ...final, domain: extracted.domain };
+  }
+
+  if (!final.focus || final.focus.trim() === "" || final.focus.trim().toLowerCase() === "unknown") {
+    final = { ...final, focus: heuristicFocus };
+  }
+
+  const parsedSignals = Array.isArray(final.signals) ? final.signals : [];
+  const mergedSignals = [...parsedSignals, ...extracted.signals].filter(
+    (value, index, array) => value && array.indexOf(value) === index
+  );
+  final = { ...final, signals: mergedSignals.slice(0, 10) };
+
+  return final;
 }
 
 async function handleApiAnalyze(req, res) {

@@ -4,6 +4,7 @@ const results = document.getElementById("results");
 const roleLevel = document.getElementById("role-level");
 const roleFocus = document.getElementById("role-focus");
 const questionList = document.getElementById("question-list");
+const signalsWrap = document.getElementById("signals");
 const jobTextInput = document.getElementById("job-text");
 const moreBtn = document.getElementById("more-btn");
 const quizBtn = document.getElementById("quiz-btn");
@@ -13,10 +14,13 @@ const quizQuestion = document.getElementById("quiz-question");
 const prevBtn = document.getElementById("prev-btn");
 const nextBtn = document.getElementById("next-btn");
 const closeBtn = document.getElementById("close-btn");
+const timerButtons = document.querySelectorAll(".timer-btn");
 
 let lastPayload = null;
 let lastQuestions = [];
+let quizQuestions = [];
 let quizIndex = 0;
+let quizDuration = 120;
 let quizSeconds = 120;
 let quizInterval = null;
 
@@ -38,11 +42,25 @@ function renderResults(analysis) {
   results.classList.remove("hidden");
   const level = analysis.role_level || "unknown";
   const focus = analysis.focus || "design";
+  const signals = Array.isArray(analysis.signals) ? analysis.signals.slice(0, 6) : [];
 
   roleLevel.textContent = level.charAt(0).toUpperCase() + level.slice(1);
   roleFocus.textContent = focus.charAt(0).toUpperCase() + focus.slice(1);
   questionList.innerHTML = "";
   lastQuestions = [];
+
+  signalsWrap.innerHTML = "";
+  if (signals.length) {
+    signalsWrap.classList.remove("hidden");
+    signals.forEach((signal) => {
+      const tag = document.createElement("span");
+      tag.className = "signal-tag";
+      tag.textContent = signal;
+      signalsWrap.appendChild(tag);
+    });
+  } else {
+    signalsWrap.classList.add("hidden");
+  }
 
   (analysis.themes || []).forEach((themeBlock) => {
     const wrapper = document.createElement("div");
@@ -68,28 +86,38 @@ function renderResults(analysis) {
   quizBtn.disabled = false;
 }
 
+function shuffleQuestions(questions) {
+  const shuffled = questions.slice();
+  for (let i = shuffled.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+}
+
 function startQuiz() {
   if (!lastQuestions.length) {
     setStatus("Generate questions first to start quiz mode.", "error");
     return;
   }
 
+  quizQuestions = shuffleQuestions(lastQuestions);
   quizIndex = 0;
-  quizSeconds = 120;
+  quizSeconds = quizDuration;
   quizModal.classList.remove("hidden");
   updateQuizQuestion();
   startTimer();
 }
 
 function updateQuizQuestion() {
-  if (!lastQuestions.length) {
+  if (!quizQuestions.length) {
     quizQuestion.textContent = "—";
     return;
   }
-  const question = lastQuestions[quizIndex % lastQuestions.length];
+  const question = quizQuestions[quizIndex % quizQuestions.length];
   quizQuestion.textContent = question;
   prevBtn.disabled = quizIndex <= 0;
-  nextBtn.disabled = quizIndex >= lastQuestions.length - 1;
+  nextBtn.disabled = quizIndex >= quizQuestions.length - 1;
 }
 
 function startTimer() {
@@ -201,17 +229,17 @@ quizBtn.addEventListener("click", () => {
 });
 
 prevBtn.addEventListener("click", () => {
-  if (!lastQuestions.length) return;
-  quizIndex = (quizIndex - 1 + lastQuestions.length) % lastQuestions.length;
-  quizSeconds = 120;
+  if (!quizQuestions.length) return;
+  quizIndex = (quizIndex - 1 + quizQuestions.length) % quizQuestions.length;
+  quizSeconds = quizDuration;
   updateQuizQuestion();
   startTimer();
 });
 
 nextBtn.addEventListener("click", () => {
-  if (quizIndex >= lastQuestions.length - 1) return;
+  if (quizIndex >= quizQuestions.length - 1) return;
   quizIndex += 1;
-  quizSeconds = 120;
+  quizSeconds = quizDuration;
   updateQuizQuestion();
   startTimer();
 });
@@ -230,5 +258,25 @@ quizModal.addEventListener("click", (event) => {
   }
 });
 
+function setActiveTimer(seconds) {
+  quizDuration = seconds;
+  quizSeconds = quizDuration;
+  timerButtons.forEach((btn) => {
+    btn.classList.toggle("active", Number(btn.dataset.seconds) === seconds);
+  });
+  updateTimer();
+  if (!quizModal.classList.contains("hidden")) {
+    startTimer();
+  }
+}
+
+timerButtons.forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const seconds = Number(btn.dataset.seconds || 120);
+    setActiveTimer(seconds);
+  });
+});
+
 moreBtn.disabled = true;
 quizBtn.disabled = true;
+setActiveTimer(120);
