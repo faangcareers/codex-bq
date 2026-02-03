@@ -59,11 +59,33 @@
         <div class="questions">
           <h2>Behavioral questions</h2>
           <div id="question-list"></div>
+          <div class="actions">
+            <button id="more-btn" type="button">Generate more</button>
+            <button id="quiz-btn" type="button" class="secondary">Quiz mode</button>
+          </div>
+        </div>
+
+        <div id="quiz-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="quiz-title">
+          <div class="modal-backdrop" data-close="true"></div>
+          <div class="quiz">
+            <div class="quiz-header">
+              <span id="quiz-title" class="label">Quiz mode</span>
+              <div class="quiz-meta">
+                <span id="quiz-timer" class="timer">02:00</span>
+                <button id="close-btn" type="button" class="icon-btn" aria-label="Exit quiz">✕</button>
+              </div>
+            </div>
+            <p id="quiz-question" class="quiz-question">—</p>
+            <div class="actions">
+              <button id="prev-btn" type="button" class="secondary">← Previous</button>
+              <button id="next-btn" type="button">Next →</button>
+            </div>
+          </div>
         </div>
       </section>
 
       <section class="footer">
-        <p>Questions are generated automatically. Always review for accuracy and bias.</p>
+        <p>Questions are generated automatically. Always review for accuracy and bias. Made with love by Eugene.</p>
       </section>
     </main>
 
