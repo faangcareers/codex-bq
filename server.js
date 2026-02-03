@@ -8,11 +8,13 @@ const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = join(process.cwd(), "public");
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const ANALYTICS_PATH = join(process.cwd(), "analytics.json");
+const LINKS_PATH = join(process.cwd(), "job_links.json");
 
 let analytics = {
   totalVisits: 0,
   lastUpdated: null
 };
+let jobLinks = [];
 
 async function loadAnalytics() {
   try {
@@ -32,6 +34,22 @@ async function loadAnalytics() {
 async function persistAnalytics() {
   analytics.lastUpdated = new Date().toISOString();
   await writeFile(ANALYTICS_PATH, `${JSON.stringify(analytics, null, 2)}\n`);
+}
+
+async function loadJobLinks() {
+  try {
+    const raw = await readFile(LINKS_PATH, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      jobLinks = parsed;
+    }
+  } catch {
+    // No links yet; start fresh.
+  }
+}
+
+async function persistJobLinks() {
+  await writeFile(LINKS_PATH, `${JSON.stringify(jobLinks, null, 2)}\n`);
 }
 
 const MIME_TYPES = {
@@ -245,6 +263,13 @@ async function handleApiAnalyze(req, res) {
       if (rawText && typeof rawText === "string" && rawText.trim().length >= 200) {
         jobText = normalizeJobText(rawText);
       } else if (url && isValidHttpUrl(url)) {
+        jobLinks.push({
+          title: new URL(url).hostname,
+          url,
+          createdAt: new Date().toISOString(),
+          createdAtMs: Date.now()
+        });
+        await persistJobLinks();
         jobText = await fetchJobText(url);
       } else {
         return sendJson(res, 400, { error: "Please provide a valid URL or paste the job text." });
@@ -353,6 +378,110 @@ function renderAnalyticsPage() {
 </html>`;
 }
 
+function renderLinksPage() {
+  const rows = jobLinks
+    .slice()
+    .reverse()
+    .map((item) => {
+      const date = item?.createdAt
+        ? new Date(item.createdAt).toLocaleString("en-US")
+        : "—";
+      const title = item?.title || "Untitled";
+      const url = item?.url || "";
+      return `<tr>
+        <td>${date}</td>
+        <td>${title}</td>
+        <td><a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a></td>
+      </tr>`;
+    })
+    .join("");
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Job Links</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      body {
+        margin: 0;
+        font-family: "Helvetica Neue", Arial, sans-serif;
+        background: #0f1115;
+        color: #f5f7ff;
+      }
+      .wrap {
+        min-height: 100vh;
+        padding: 32px;
+      }
+      h1 {
+        margin: 0 0 18px;
+        font-size: 22px;
+        letter-spacing: 0.02em;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        background: #171a21;
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      th, td {
+        text-align: left;
+        padding: 14px 16px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        font-size: 14px;
+      }
+      th {
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        color: #9aa3b2;
+        font-size: 12px;
+      }
+      tr:last-child td {
+        border-bottom: none;
+      }
+      a {
+        color: #8cc7ff;
+        word-break: break-all;
+      }
+      .empty {
+        padding: 24px;
+        color: #9aa3b2;
+        background: #171a21;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>Saved Job Links (${jobLinks.length})</h1>
+      ${
+        rows
+          ? `<table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Title</th>
+                  <th>URL</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows}
+              </tbody>
+            </table>`
+          : `<div class="empty">No links saved yet.</div>`
+      }
+    </div>
+  </body>
+</html>`;
+}
+
 const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && req.url.startsWith("/api/analyze")) {
     return handleApiAnalyze(req, res);
@@ -360,6 +489,10 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "GET" && req.url.startsWith("/admin/analytics")) {
     return sendHtml(res, 200, renderAnalyticsPage());
+  }
+
+  if (req.method === "GET" && req.url.startsWith("/admin/links")) {
+    return sendHtml(res, 200, renderLinksPage());
   }
 
   if (req.method === "GET") {
@@ -376,6 +509,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 await loadAnalytics();
+await loadJobLinks();
 server.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
 });
