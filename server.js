@@ -56,6 +56,14 @@ function sendJson(res, status, payload) {
   res.end(body);
 }
 
+function sendHtml(res, status, html) {
+  res.writeHead(status, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Content-Length": Buffer.byteLength(html)
+  });
+  res.end(html);
+}
+
 function isValidHttpUrl(value) {
   try {
     const url = new URL(value);
@@ -269,13 +277,89 @@ async function serveStatic(req, res) {
   }
 }
 
+function renderAnalyticsPage() {
+  const total = analytics.totalVisits;
+  const updated = analytics.lastUpdated
+    ? new Date(analytics.lastUpdated).toLocaleString("en-US")
+    : "Never";
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Analytics</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      body {
+        margin: 0;
+        font-family: "Helvetica Neue", Arial, sans-serif;
+        background: #0f1115;
+        color: #f5f7ff;
+      }
+      .wrap {
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 32px;
+      }
+      .card {
+        width: min(520px, 100%);
+        background: #171a21;
+        border-radius: 16px;
+        padding: 28px;
+        box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-size: 22px;
+        letter-spacing: 0.02em;
+      }
+      .metric {
+        font-size: 56px;
+        font-weight: 700;
+        margin: 8px 0 16px;
+      }
+      .label {
+        font-size: 14px;
+        text-transform: uppercase;
+        letter-spacing: 0.16em;
+        color: #9aa3b2;
+      }
+      .updated {
+        font-size: 14px;
+        color: #9aa3b2;
+      }
+      .note {
+        margin-top: 18px;
+        font-size: 12px;
+        color: #6f7785;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="card">
+        <div class="label">Total visits</div>
+        <div class="metric">${total}</div>
+        <div class="updated">Last updated: ${updated}</div>
+        <div class="note">Counts visits to "/" and "/index.html".</div>
+      </div>
+    </div>
+  </body>
+</html>`;
+}
+
 const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && req.url.startsWith("/api/analyze")) {
     return handleApiAnalyze(req, res);
   }
 
   if (req.method === "GET" && req.url.startsWith("/admin/analytics")) {
-    return sendJson(res, 200, { analytics });
+    return sendHtml(res, 200, renderAnalyticsPage());
   }
 
   if (req.method === "GET") {
