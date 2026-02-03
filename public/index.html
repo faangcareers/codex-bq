@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Design Role Questioner</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero">
+        <div class="badge">MVP · Design Interview Coach</div>
+        <h1>Turn a design job link into tailored behavioral questions.</h1>
+        <p>
+          Paste a public job posting for a product or UX/UI designer. We'll read the role,
+          infer the seniority, and generate focused behavioral interview questions.
+        </p>
+      </section>
+
+      <section class="card">
+        <form id="job-form">
+          <label for="job-url">Job posting URL (English)</label>
+          <div class="input-row">
+            <input
+              id="job-url"
+              name="job-url"
+              type="url"
+              placeholder="https://careers.company.com/design-role"
+            />
+            <button type="submit">Generate</button>
+          </div>
+          <p class="hint">Works best with public company pages or public LinkedIn listings.</p>
+          <div class="divider">or paste the job text</div>
+          <textarea
+            id="job-text"
+            name="job-text"
+            rows="6"
+            placeholder="Paste the full job description here if the URL is blocked."
+          ></textarea>
+        </form>
+
+        <div id="status" class="status hidden"></div>
+      </section>
+
+      <section id="results" class="results hidden">
+        <div class="summary">
+          <div>
+            <span class="label">Seniority</span>
+            <span id="role-level" class="value">—</span>
+          </div>
+          <div>
+            <span class="label">Focus</span>
+            <span id="role-focus" class="value">—</span>
+          </div>
+        </div>
+
+        <div class="questions">
+          <h2>Behavioral questions</h2>
+          <div id="question-list"></div>
+        </div>
+      </section>
+
+      <section class="footer">
+        <p>Questions are generated automatically. Always review for accuracy and bias.</p>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
