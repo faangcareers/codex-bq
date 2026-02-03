@@ -22,8 +22,11 @@ function clearStatus() {
 
 function renderResults(analysis) {
   results.classList.remove("hidden");
-  roleLevel.textContent = analysis.role_level || "unknown";
-  roleFocus.textContent = analysis.focus || "design";
+  const level = analysis.role_level || "unknown";
+  const focus = analysis.focus || "design";
+
+  roleLevel.textContent = level.charAt(0).toUpperCase() + level.slice(1);
+  roleFocus.textContent = focus.charAt(0).toUpperCase() + focus.slice(1);
   questionList.innerHTML = "";
 
   (analysis.themes || []).forEach((themeBlock) => {
