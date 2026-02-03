@@ -337,9 +337,11 @@ function normalizeJobText(text) {
   return cleaned.slice(0, 12000);
 }
 
-function inferSeniorityFromText(jobText) {
+function inferSeniorityFromText(jobText, url) {
   const text = (jobText || "").toLowerCase();
-  const has = (pattern) => pattern.test(text);
+  const urlText = (url || "").toLowerCase();
+  const combined = `${text} ${urlText}`;
+  const has = (pattern) => pattern.test(combined);
 
   if (has(/\b(director|vp|head of design|design director)\b/)) return "director";
   if (has(/\b(staff|principal|lead)\b/)) return "staff";
@@ -416,12 +418,12 @@ function inferFocusFromText(jobText) {
   return "product design";
 }
 
-async function callOpenAI(jobText) {
+async function callOpenAI(jobText, jobUrl) {
   if (!OPENAI_API_KEY) {
     throw new Error("Missing OPENAI_API_KEY in environment.");
   }
 
-  const heuristicLevel = inferSeniorityFromText(jobText);
+  const heuristicLevel = inferSeniorityFromText(jobText, jobUrl);
   const extracted = extractSignals(jobText);
   const heuristicFocus = inferFocusFromText(jobText);
   const userPrompt = `Job posting text (English):\n${jobText}\n\n${SCHEMA_HINT}`;
@@ -580,7 +582,7 @@ async function handleApiAnalyze(req, res) {
         return sendJson(res, 400, { error: "Please provide a valid URL or paste the job text." });
       }
 
-      const analysis = await callOpenAI(jobText);
+      const analysis = await callOpenAI(jobText, url);
 
       return sendJson(res, 200, { analysis, parse: parseMeta });
     } catch (err) {
