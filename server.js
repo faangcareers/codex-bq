@@ -1,12 +1,38 @@
 import "dotenv/config";
 
 import http from "http";
-import { readFile } from "fs/promises";
+import { readFile, writeFile } from "fs/promises";
 import { extname, join } from "path";
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = join(process.cwd(), "public");
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const ANALYTICS_PATH = join(process.cwd(), "analytics.json");
+
+let analytics = {
+  totalVisits: 0,
+  lastUpdated: null
+};
+
+async function loadAnalytics() {
+  try {
+    const raw = await readFile(ANALYTICS_PATH, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (typeof parsed?.totalVisits === "number") {
+      analytics = {
+        totalVisits: parsed.totalVisits,
+        lastUpdated: parsed.lastUpdated || null
+      };
+    }
+  } catch {
+    // No analytics yet; start fresh.
+  }
+}
+
+async function persistAnalytics() {
+  analytics.lastUpdated = new Date().toISOString();
+  await writeFile(ANALYTICS_PATH, `${JSON.stringify(analytics, null, 2)}\n`);
+}
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -248,7 +274,16 @@ const server = http.createServer(async (req, res) => {
     return handleApiAnalyze(req, res);
   }
 
+  if (req.method === "GET" && req.url.startsWith("/admin/analytics")) {
+    return sendJson(res, 200, { analytics });
+  }
+
   if (req.method === "GET") {
+    const pathOnly = req.url.split("?")[0];
+    if (pathOnly === "/" || pathOnly === "/index.html") {
+      analytics.totalVisits += 1;
+      await persistAnalytics();
+    }
     return serveStatic(req, res);
   }
 
@@ -256,6 +291,7 @@ const server = http.createServer(async (req, res) => {
   res.end("Method not allowed");
 });
 
+await loadAnalytics();
 server.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
 });
