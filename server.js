@@ -3,6 +3,8 @@ import "dotenv/config";
 import http from "http";
 import { readFile, writeFile } from "fs/promises";
 import { extname, join } from "path";
+import { JSDOM } from "jsdom";
+import { Readability } from "@mozilla/readability";
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = join(process.cwd(), "public");
@@ -111,6 +113,180 @@ function extractTextFromHtml(html) {
   return decodeEntities(noTags);
 }
 
+function safeJsonParse(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function extractJsonLdJobPosting(document) {
+  const scripts = Array.from(document.querySelectorAll('script[type="application/ld+json"]'));
+  const candidates = [];
+
+  scripts.forEach((script) => {
+    const parsed = safeJsonParse(script.textContent || "");
+    if (!parsed) return;
+    if (Array.isArray(parsed)) {
+      candidates.push(...parsed);
+    } else if (parsed && typeof parsed === "object") {
+      if (Array.isArray(parsed["@graph"])) {
+        candidates.push(...parsed["@graph"]);
+      } else {
+        candidates.push(parsed);
+      }
+    }
+  });
+
+  const jobPosting = candidates.find((item) => {
+    const type = item?.["@type"];
+    if (Array.isArray(type)) return type.includes("JobPosting");
+    return type === "JobPosting";
+  });
+
+  if (!jobPosting) return null;
+
+  const parts = [
+    jobPosting.title,
+    jobPosting.description,
+    jobPosting.responsibilities,
+    jobPosting.qualifications,
+    jobPosting.experienceRequirements,
+    jobPosting.skills
+  ]
+    .filter(Boolean)
+    .map((part) => {
+      const value = String(part);
+      return value.includes("<") ? extractTextFromHtml(value) : value;
+    });
+
+  const text = parts.join("\n\n");
+  return text ? normalizeJobText(text) : null;
+}
+
+function extractMetaDescription(document) {
+  const meta =
+    document.querySelector('meta[property="og:description"]') ||
+    document.querySelector('meta[name="twitter:description"]') ||
+    document.querySelector('meta[name="description"]');
+
+  const content = meta?.getAttribute("content");
+  return content ? normalizeJobText(content) : null;
+}
+
+function extractFromAshby(document) {
+  const script = document.querySelector('script#__NEXT_DATA__');
+  if (!script?.textContent) return null;
+  const parsed = safeJsonParse(script.textContent);
+  const job =
+    parsed?.props?.pageProps?.job ||
+    parsed?.props?.pageProps?.posting ||
+    parsed?.props?.pageProps?.data?.job;
+
+  if (!job) return null;
+  const html = job?.descriptionHtml || job?.description || job?.descriptionHTML;
+  if (!html) return null;
+  return normalizeJobText(extractTextFromHtml(String(html)));
+}
+
+function extractFromLever(document, html) {
+  const posting = document.querySelector(".posting") || document.querySelector(".posting-page");
+  if (posting) return normalizeJobText(posting.textContent || "");
+
+  const match = html.match(/window\.__lever__\s*=\s*(\{[\s\S]*?\});/);
+  if (!match) return null;
+  const parsed = safeJsonParse(match[1]);
+  const text = parsed?.posting?.text || parsed?.posting?.description;
+  return text ? normalizeJobText(String(text)) : null;
+}
+
+function extractFromGreenhouse(document) {
+  const content =
+    document.querySelector("#content") ||
+    document.querySelector(".content") ||
+    document.querySelector("main");
+  if (!content) return null;
+  return normalizeJobText(content.textContent || "");
+}
+
+function extractFromWorkday(document, html) {
+  const script = Array.from(document.querySelectorAll('script[type="application/json"]')).find(
+    (item) => item.textContent && item.textContent.includes("jobPostingInfo")
+  );
+  if (script?.textContent) {
+    const parsed = safeJsonParse(script.textContent);
+    const job = parsed?.jobPostingInfo || parsed?.data?.jobPostingInfo;
+    const description = job?.jobDescription || job?.jobDescriptionHtml;
+    if (description) return normalizeJobText(extractTextFromHtml(String(description)));
+  }
+
+  const text = extractTextFromHtml(html);
+  return text ? normalizeJobText(text) : null;
+}
+
+function extractFromATS(document, html, url) {
+  const hostname = url ? new URL(url).hostname : "";
+
+  if (hostname.includes("ashbyhq.com")) {
+    const text = extractFromAshby(document);
+    if (text) return { text, method: "ats-ashby" };
+  }
+
+  if (hostname.includes("lever.co")) {
+    const text = extractFromLever(document, html);
+    if (text) return { text, method: "ats-lever" };
+  }
+
+  if (hostname.includes("greenhouse.io")) {
+    const text = extractFromGreenhouse(document);
+    if (text) return { text, method: "ats-greenhouse" };
+  }
+
+  if (hostname.includes("myworkdayjobs.com") || hostname.includes("workday")) {
+    const text = extractFromWorkday(document, html);
+    if (text) return { text, method: "ats-workday" };
+  }
+
+  return null;
+}
+
+function extractWithReadability(html, url) {
+  const dom = new JSDOM(html, { url });
+  const reader = new Readability(dom.window.document);
+  const article = reader.parse();
+  if (!article?.textContent) return null;
+  return normalizeJobText(article.textContent);
+}
+
+function parseJobTextFromHtml({ html, url, sourceLabel = "direct" }) {
+  const dom = new JSDOM(html, { url });
+  const document = dom.window.document;
+
+  const jsonLd = extractJsonLdJobPosting(document);
+  if (jsonLd && jsonLd.length >= 200) {
+    return { text: jsonLd, method: "jsonld" };
+  }
+
+  const ats = extractFromATS(document, html, url);
+  if (ats?.text && ats.text.length >= 200) {
+    return ats;
+  }
+
+  const readability = extractWithReadability(html, url);
+  if (readability && readability.length >= 200) {
+    return { text: readability, method: "readability" };
+  }
+
+  const meta = extractMetaDescription(document);
+  if (meta && meta.length >= 200) {
+    return { text: meta, method: "meta" };
+  }
+
+  const plain = normalizeJobText(extractTextFromHtml(html));
+  return { text: plain, method: sourceLabel };
+}
+
 async function fetchJobText(url) {
   const response = await fetch(url, {
     headers: {
@@ -119,28 +295,41 @@ async function fetchJobText(url) {
     }
   });
 
-  let text = "";
-
   if (response.ok) {
     const html = await response.text();
-    text = extractTextFromHtml(html);
-  } else {
-    const jinaUrl = url.startsWith("https://")
-      ? `https://r.jina.ai/https://${url.slice("https://".length)}`
-      : `https://r.jina.ai/http://${url.slice("http://".length)}`;
-    const jinaResponse = await fetch(jinaUrl);
-    if (!jinaResponse.ok) {
-      throw new Error(`Failed to fetch page. Status ${response.status}`);
+    const parsed = parseJobTextFromHtml({ html, url, sourceLabel: "direct" });
+    if (parsed?.text && parsed.text.length >= 200) {
+      return { text: parsed.text.slice(0, 12000), method: parsed.method };
     }
-    const jinaText = await jinaResponse.text();
-    text = normalizeJobText(jinaText);
   }
 
-  if (!text || text.length < 200) {
+  const jinaUrl = url.startsWith("https://")
+    ? `https://r.jina.ai/https://${url.slice("https://".length)}`
+    : `https://r.jina.ai/http://${url.slice("http://".length)}`;
+  const jinaResponse = await fetch(jinaUrl);
+  if (jinaResponse.ok) {
+    const jinaText = await jinaResponse.text();
+    const normalized = normalizeJobText(jinaText);
+    if (normalized && normalized.length >= 200) {
+      return { text: normalized.slice(0, 12000), method: "jina" };
+    }
+  }
+
+  const doubleJinaUrl = url.startsWith("https://")
+    ? `https://r.jina.ai/http://r.jina.ai/https://${url.slice("https://".length)}`
+    : `https://r.jina.ai/http://r.jina.ai/http://${url.slice("http://".length)}`;
+  const doubleResponse = await fetch(doubleJinaUrl);
+  if (!doubleResponse.ok) {
+    throw new Error(`Failed to fetch page. Status ${response.status}`);
+  }
+  const doubleText = await doubleResponse.text();
+  const doubleNormalized = normalizeJobText(doubleText);
+
+  if (!doubleNormalized || doubleNormalized.length < 200) {
     throw new Error("Not enough readable text found on the page.");
   }
 
-  return text.slice(0, 12000);
+  return { text: doubleNormalized.slice(0, 12000), method: "jina-double" };
 }
 
 function normalizeJobText(text) {
@@ -372,8 +561,10 @@ async function handleApiAnalyze(req, res) {
       const rawText = payload?.text;
 
       let jobText = "";
+      let parseMeta = { method: "unknown", length: 0 };
       if (rawText && typeof rawText === "string" && rawText.trim().length >= 200) {
         jobText = normalizeJobText(rawText);
+        parseMeta = { method: "pasted", length: jobText.length };
       } else if (url && isValidHttpUrl(url)) {
         jobLinks.push({
           title: new URL(url).hostname,
@@ -382,14 +573,16 @@ async function handleApiAnalyze(req, res) {
           createdAtMs: Date.now()
         });
         await persistJobLinks();
-        jobText = await fetchJobText(url);
+        const parsed = await fetchJobText(url);
+        jobText = parsed.text;
+        parseMeta = { method: parsed.method || "direct", length: jobText.length };
       } else {
         return sendJson(res, 400, { error: "Please provide a valid URL or paste the job text." });
       }
 
       const analysis = await callOpenAI(jobText);
 
-      return sendJson(res, 200, { analysis });
+      return sendJson(res, 200, { analysis, parse: parseMeta });
     } catch (err) {
       return sendJson(res, 500, { error: err.message || "Server error" });
     }
