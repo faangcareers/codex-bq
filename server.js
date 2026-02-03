@@ -84,12 +84,61 @@ function normalizeJobText(text) {
   return cleaned.slice(0, 12000);
 }
 
+function inferSeniorityFromText(jobText) {
+  const text = (jobText || "").toLowerCase();
+  const has = (pattern) => pattern.test(text);
+
+  if (has(/\b(director|vp|head of design|design director)\b/)) return "director";
+  if (has(/\b(staff|principal|lead)\b/)) return "staff";
+  if (has(/\b(senior|sr\.?|senior-level)\b/)) return "senior";
+  if (has(/\b(mid|mid-level|intermediate)\b/)) return "mid";
+  if (has(/\b(junior|jr\.?|entry[- ]level)\b/)) return "junior";
+
+  return "unknown";
+}
+
 async function callOpenAI(jobText) {
   if (!OPENAI_API_KEY) {
     throw new Error("Missing OPENAI_API_KEY in environment.");
   }
 
+  const heuristicLevel = inferSeniorityFromText(jobText);
   const userPrompt = `Job posting text (English):\n${jobText}\n\n${SCHEMA_HINT}`;
+  const responseSchema = {
+    name: "design_role_questions",
+    schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        role_level: {
+          type: "string",
+          enum: ["junior", "mid", "senior", "lead", "staff", "director", "unknown"]
+        },
+        focus: { type: "string" },
+        themes: {
+          type: "array",
+          minItems: 3,
+          maxItems: 8,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              theme: { type: "string" },
+              questions: {
+                type: "array",
+                minItems: 1,
+                maxItems: 3,
+                items: { type: "string" }
+              }
+            },
+            required: ["theme", "questions"]
+          }
+        }
+      },
+      required: ["role_level", "focus", "themes"]
+    },
+    strict: true
+  };
 
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
@@ -99,8 +148,14 @@ async function callOpenAI(jobText) {
     },
     body: JSON.stringify({
       model: "gpt-4.1-mini",
-      instructions: SYSTEM_PROMPT,
-      input: userPrompt
+      instructions: `${SYSTEM_PROMPT}\nHeuristic seniority hint from text (may be unknown): ${heuristicLevel}. If the posting explicitly names a level, prioritize that.`,
+      input: userPrompt,
+      text: {
+        format: {
+          type: "json_schema",
+          ...responseSchema
+        }
+      }
     })
   });
 
@@ -129,6 +184,10 @@ async function callOpenAI(jobText) {
 
   if (!parsed.themes || !Array.isArray(parsed.themes)) {
     throw new Error("OpenAI JSON missing themes array.");
+  }
+
+  if (parsed.role_level === "unknown" && heuristicLevel !== "unknown") {
+    return { ...parsed, role_level: heuristicLevel };
   }
 
   return parsed;

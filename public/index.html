@@ -9,17 +9,17 @@
   <body>
     <main class="page">
       <section class="hero">
-        <div class="badge">MVP · Design Interview Coach</div>
-        <h1>Turn a design job link into tailored behavioral questions.</h1>
+        <div class="badge">FAANG AI Agent</div>
+        <h1>Turn a design job link into behavioral questions.</h1>
         <p>
-          Paste a public job posting for a product or UX/UI designer. We'll read the role,
-          infer the seniority, and generate focused behavioral interview questions.
+          Paste a public design job posting. I'll read the role, identify the seniority and
+          generate behavioral interview questions.
         </p>
       </section>
 
       <section class="card">
         <form id="job-form">
-          <label for="job-url">Job posting URL (English)</label>
+          <label for="job-url">Job posting URL</label>
           <div class="input-row">
             <input
               id="job-url"
@@ -30,13 +30,15 @@
             <button type="submit">Generate</button>
           </div>
           <p class="hint">Works best with public company pages or public LinkedIn listings.</p>
-          <div class="divider">or paste the job text</div>
-          <textarea
-            id="job-text"
-            name="job-text"
-            rows="6"
-            placeholder="Paste the full job description here if the URL is blocked."
-          ></textarea>
+          <details class="accordion">
+            <summary>Or paste the job text</summary>
+            <textarea
+              id="job-text"
+              name="job-text"
+              rows="6"
+              placeholder="Paste the full job description here if the URL is blocked."
+            ></textarea>
+          </details>
         </form>
 
         <div id="status" class="status hidden"></div>
