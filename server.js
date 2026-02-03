@@ -1,3 +1,5 @@
+import "dotenv/config";
+
 import http from "http";
 import { readFile } from "fs/promises";
 import { extname, join } from "path";
